@@ -213,7 +213,7 @@ model = dict(
 )
 
 dataset_type = "BEVFormerNuScenesDataset"
-data_root = "data/nuscenes/"
+data_root = "data/nuscenes-mini/"
 file_client_args = dict(backend="disk")
 
 

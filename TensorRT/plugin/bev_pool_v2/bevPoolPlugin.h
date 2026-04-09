@@ -20,6 +20,7 @@ public:
   BEVPoolPlugin(const void *serialData, size_t serialLength, bool use_h2);
   ~BEVPoolPlugin() override;
 
+  // IPluginV2 接口方法
   int32_t getNbOutputs() const noexcept override;
 
   nvinfer1::DimsExprs
@@ -45,11 +46,13 @@ public:
 
   void serialize(void *buffer) const noexcept override;
 
+  // 【关键】告诉 TRT 哪些 (DataType, Format) 组合是支持的
   bool supportsFormatCombination(int32_t pos,
                                  nvinfer1::PluginTensorDesc const *inOut,
                                  int32_t nbInputs,
                                  int32_t nbOutputs) noexcept override;
 
+  // 其他标准接口
   char const *getPluginType() const noexcept override;
 
   char const *getPluginVersion() const noexcept override;
@@ -71,21 +74,25 @@ public:
 
   void detachFromContext() noexcept override;
 
+  // 【重要】配置插件，根据输入/输出张量动态调整内部状态
   void configurePlugin(nvinfer1::DynamicPluginTensorDesc const *in,
                        int32_t nbInputs,
                        nvinfer1::DynamicPluginTensorDesc const *out,
                        int32_t nbOutputs) noexcept override;
 
 private:
+  // 是否使用 half2 向量化加速
   bool use_h2;
   bool use_int8{true};
   std::string mPluginNamespace;
   std::string mNamespace;
 
+  //// 输出 BEV 特征图的宽度
   int mOutWidth;
   int mOutHeight;
 };
 
+// 插件创建器1：不使用 half2
 class BEVPoolPluginCreator : public trt_plugin::BaseCreator {
 public:
   BEVPoolPluginCreator();

@@ -30,6 +30,7 @@ std::vector<PluginField> BEVPoolPluginCreator2::mPluginAttributes;
 BEVPoolPlugin::BEVPoolPlugin(int outWidth, int outHeight, bool use_h2)
     : mOutWidth(outWidth), mOutHeight(outHeight), use_h2(use_h2) {}
 
+// 反序列化构造函数
 BEVPoolPlugin::BEVPoolPlugin(const void *serialData, size_t serialLength,
                              bool use_h2)
     : use_h2(use_h2) {
@@ -41,6 +42,7 @@ BEVPoolPlugin::~BEVPoolPlugin() { terminate(); }
 
 int32_t BEVPoolPlugin::getNbOutputs() const noexcept { return 1; }
 
+// 【核心】获取输出维度
 DimsExprs BEVPoolPlugin::getOutputDimensions(
     int32_t outputIndex, const nvinfer1::DimsExprs *inputs, int32_t nbInputs,
     nvinfer1::IExprBuilder &exprBuilder) noexcept {
@@ -65,10 +67,24 @@ BEVPoolPlugin::getWorkspaceSize(const nvinfer1::PluginTensorDesc *inputs,
   return 0;
 }
 
+
+// 【核心】执行函数
 int32_t BEVPoolPlugin::enqueue(const nvinfer1::PluginTensorDesc *inputDesc,
                                const nvinfer1::PluginTensorDesc *outputDesc,
                                const void *const *inputs, void *const *outputs,
                                void *workspace, cudaStream_t stream) noexcept {
+
+
+  // input 7 个 GPU 设备指针数组，指向输入张量的首地址
+  /**
+   * depth [B*N, D, H, W] 每个视角每个像素的深度值（或深度概率）
+   * feat [B*N, H, W, C] 图像特征（C 通道，NHWC 布局）
+   * ranks_depth [n_points] 每个有效 3D 点在 depth 中的线性索引   n_points：所有有效 3D 点总数
+   * ranks_feat [n_points] 每个有效 3D 点在 feat 中的线性索引（不含 C）
+   * ranks_bev [n_points] 每个点对应的 BEV 输出线性索引（如 b*H*W + y*W + x）
+   * interval_starts [n_intervals] 每个非空 BEV 格子在点列表中的起始位置    n_intervals：被至少一个点命中的 BEV 格子数
+   * interval_lengths [n_intervals] 每个非空 BEV 格子包含的点数量
+   */
   nvinfer1::Dims feat_dims = inputDesc[1].dims;     // bnhwc
   nvinfer1::Dims interval_dims = inputDesc[5].dims; // n
   nvinfer1::Dims out_dims = outputDesc[0].dims;     // bhwc
@@ -80,6 +96,7 @@ int32_t BEVPoolPlugin::enqueue(const nvinfer1::PluginTensorDesc *inputDesc,
   //    cudaEventCreate(&start);
   //    cudaEventCreate(&end);
   //    cudaEventRecord(start, stream);
+  // 根据数据类型调用不同的 CUDA kernel
   switch (data_type) {
   case nvinfer1::DataType::kFLOAT:
     bev_pool_v2(feat_dims.d[3], interval_dims.d[0], num_points,
@@ -89,6 +106,7 @@ int32_t BEVPoolPlugin::enqueue(const nvinfer1::PluginTensorDesc *inputDesc,
     break;
   case nvinfer1::DataType::kHALF:
     if (use_h2) {
+    // 使用 half2 向量化，一次处理2个通道
       bev_pool_v2_h2(feat_dims.d[3], interval_dims.d[0], num_points,
                      (__half *)inputs[0], (__half2 *)inputs[1],
                      (int *)inputs[2], (int *)inputs[3], (int *)inputs[4],
@@ -102,6 +120,7 @@ int32_t BEVPoolPlugin::enqueue(const nvinfer1::PluginTensorDesc *inputDesc,
     }
     break;
   case nvinfer1::DataType::kINT8:
+    // INT8 量化版本，需要处理 scale
     bev_pool_v2_int8(
         feat_dims.d[3], interval_dims.d[0], num_points, (int8_t *)inputs[0],
         inputDesc[0].scale, (int8_4 *)inputs[1], inputDesc[1].scale,
@@ -130,18 +149,22 @@ void BEVPoolPlugin::serialize(void *buffer) const noexcept {
   serialize_value(&buffer, mOutHeight);
 }
 
+// 【关键】支持的格式组合
 bool BEVPoolPlugin::supportsFormatCombination(
     int32_t pos, const nvinfer1::PluginTensorDesc *inOut, int32_t nbInputs,
     int32_t nbOutputs) noexcept {
   if (pos == 0) {
+    // 第一个输入 (depth) 必须是 FLOAT/HALF/INT8
     return ((inOut[pos].type == nvinfer1::DataType::kFLOAT ||
              inOut[pos].type == nvinfer1::DataType::kHALF ||
              (inOut[pos].type == nvinfer1::DataType::kINT8 && use_int8)) &&
             inOut[pos].format == nvinfer1::TensorFormat::kLINEAR);
   } else if (pos == 1 || pos == 7) {
+    // 第二个输入 (feat) 和输出必须与第一个输入同类型
     return inOut[pos].type == inOut[0].type &&
            inOut[pos].format == inOut[0].format;
   } else {
+    // 其余的ranks_* 必须是 INT32
     return (inOut[pos].type == nvinfer1::DataType::kINT32 &&
             inOut[pos].format == nvinfer1::TensorFormat::kLINEAR);
   }
@@ -190,11 +213,13 @@ void BEVPoolPlugin::attachToContext(
 
 void BEVPoolPlugin::detachFromContext() noexcept {}
 
+// 【重要】动态配置
 void BEVPoolPlugin::configurePlugin(
     const nvinfer1::DynamicPluginTensorDesc *in, int32_t nbInputs,
     const nvinfer1::DynamicPluginTensorDesc *out, int32_t nbOutputs) noexcept {
   PLUGIN_ASSERT(nbInputs == 7);
   PLUGIN_ASSERT(nbOutputs == 1);
+  // 根据输出通道数是否为偶数/4的倍数，决定是否启用 half2 或 int8
   if (out[0].desc.dims.d[3] % 2 != 0) {
     use_h2 = false;
   }
@@ -325,5 +350,6 @@ IPluginV2DynamicExt *BEVPoolPluginCreator2::deserializePlugin(
   return nullptr;
 }
 
+// REGISTER_TENSORRT_PLUGIN 宏用于注册插件
 REGISTER_TENSORRT_PLUGIN(BEVPoolPluginCreator);
 REGISTER_TENSORRT_PLUGIN(BEVPoolPluginCreator2);

@@ -73,10 +73,14 @@ def create_nuscenes_infos(
     nusc_can_bus = NuScenesCanBus(dataroot=can_bus_root_path)
     from nuscenes.utils import splits
 
-    available_vers = ["v1.0-trainval"]
+    available_vers = ["v1.0-trainval", "v1.0-mini"]
     assert version in available_vers
-    train_scenes = splits.train
-    val_scenes = splits.val
+    if version == "v1.0-mini":
+        train_scenes = splits.mini_train 
+        val_scenes = splits.mini_val
+    elif version == "v1.0-trainval":
+        train_scenes = splits.train 
+        val_scenes = splits.val
 
     # filter existing scenes.
     available_scenes = get_available_scenes(nusc)
@@ -760,7 +764,10 @@ def parse_args():
 
 if __name__ == "__main__":
     args = parse_args()
-    train_version = f"{args.version}-trainval"
+    if args.version == "v1.0-trainval":
+        train_version = f"{args.version}-trainval"
+    elif args.version == "v1.0-mini":
+    train_version = f"{args.version}-mini"
     nuscenes_data_prep(
         root_path=args.root_path,
         can_bus_root_path=args.canbus,

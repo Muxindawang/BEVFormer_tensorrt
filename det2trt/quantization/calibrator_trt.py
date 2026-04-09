@@ -39,7 +39,7 @@ def get_calibrator(calibrator):
                 self.host_device_mem_dic[name] = HostDeviceMem(
                     name, host_mem, device_mem
                 )
-
+            self.loader_iter = iter(dataloader)
         def get_input_shapes(self):
             for key in self.config.default_shapes:
                 if key in locals():
@@ -60,7 +60,7 @@ def get_calibrator(calibrator):
                     return None
                 assert set(names) == self.names
                 # Assume self.batches is a generator that provides batch data.
-                data = self.iter.next()
+                data = next(self.loader_iter)
                 self.decode_data(data)
                 # Assume that self.device_input is a device buffer allocated by the constructor.
                 [

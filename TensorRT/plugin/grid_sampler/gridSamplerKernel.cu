@@ -668,12 +668,22 @@ __global__ void grid_sampler_2d_kernel(
     scalar_t *output, TensorDesc input_desc, TensorDesc grid_desc,
     TensorDesc output_desc, const GridSamplerInterpolation interpolation_mode,
     const GridSamplerPadding padding_mode, const bool align_corners) {
+  /**
+   * nthreads：总线程数 = N*out_h*out_w
+   * input：图像指针 NCHW
+   * grid：存储网格坐标 N*2*out_h*out_w
+   * input_desc，grid_desc：张量描述符，包含 shape（维度）和 stride（内存步长），用于快速计算内存偏移
+   */
+
+  // 把张量描述里的维度和 stride 读到寄存器，后面指针偏移更快
   int C = input_desc.shape[1];
   int inp_H = input_desc.shape[2];
   int inp_W = input_desc.shape[3];
   int out_H = grid_desc.shape[2];
   int out_W = grid_desc.shape[3];
+  // 输入张量 N 维 stride
   int inp_sN = input_desc.stride[0];
+  // C 维 stride
   int inp_sC = input_desc.stride[1];
   int inp_sH = input_desc.stride[2];
   int inp_sW = input_desc.stride[3];
@@ -686,22 +696,30 @@ __global__ void grid_sampler_2d_kernel(
   int out_sH = output_desc.stride[2];
   int out_sW = output_desc.stride[3];
 
+  // CUDA_1D_KERNEL_LOOP 是 PyTorch 宏：展开为 for(int index=blockIdx.x*blockDim.x+threadIdx.x;
+  //                                         index<nthreads;
+  //                                         index+=blockDim.x*gridDim.x)
   CUDA_1D_KERNEL_LOOP(index, nthreads) {
+    // 把一维线程号反推成输出特征图的 (n,h,w)
     const int w = index % out_W;
     const int h = (index / out_W) % out_H;
+    // batch 序号
     const int n = index / (out_H * out_W);
+    // 计算当前 (n, h, w) 在 grid 张量中的内存偏移（获取采样坐标 (x, y)）
     const int grid_offset = n * grid_sN + h * grid_sH + w * grid_sW;
 
     // get the corresponding input x, y coordinates from grid
     scalar_t grid_x = grid[grid_offset];
     scalar_t grid_y = grid[grid_offset + grid_sCoor];
 
+    // 将 grid 中的归一化坐标转换为输入张量的有效索引（处理边界填充）
     scalar_t ix = grid_sampler_compute_source_index(grid_x, inp_W, padding_mode,
                                                     align_corners);
     scalar_t iy = grid_sampler_compute_source_index(grid_y, inp_H, padding_mode,
                                                     align_corners);
 
     if (interpolation_mode == GridSamplerInterpolation::Bilinear) {
+      // 计算 2×2 邻域的左上角 floor 坐标
       // get NE, NW, SE, SW pixel values from (x, y)
       int ix_nw = static_cast<int>(::floor(ix));
       int iy_nw = static_cast<int>(::floor(iy));
@@ -712,6 +730,7 @@ __global__ void grid_sampler_2d_kernel(
       int ix_se = ix_nw + 1;
       int iy_se = iy_nw + 1;
 
+      // 四个权重，满足 nw+ne+sw+se = 1
       // get surfaces to each neighbor:
       scalar_t nw = (ix_se - ix) * (iy_se - iy);
       scalar_t ne = (ix - ix_sw) * (iy_sw - iy);
@@ -1924,6 +1943,7 @@ __global__ void grid_sampler_3d_kernel(
 void create_desc(const int *dims, int nb_dims, TensorDesc &desc) {
   memcpy(&desc.shape[0], dims, sizeof(int) * nb_dims);
   desc.stride[nb_dims - 1] = 1;
+   // 从倒数第二个维度开始，向前计算每个维度的步长
   for (int i = nb_dims - 2; i >= 0; --i) {
     desc.stride[i] = desc.stride[i + 1] * desc.shape[i + 1];
   }
@@ -1934,6 +1954,7 @@ void grid_sample(T *output, const T *input, const T *grid, int *output_dims,
                  int *input_dims, int *grid_dims, int nb_dims,
                  GridSamplerInterpolation interp, GridSamplerPadding padding,
                  bool align_corners, cudaStream_t stream) {
+  // 创建输入、输出、网格的张量描述符
   TensorDesc input_desc;
   create_desc(input_dims, nb_dims, input_desc);
 
@@ -1943,6 +1964,7 @@ void grid_sample(T *output, const T *input, const T *grid, int *output_dims,
   TensorDesc grid_desc;
   create_desc(grid_dims, nb_dims, grid_desc);
 
+  // 计算总线程数（跳过第二个维度）  // 通常第二个维度是通道（C），不需要单独迭代
   int count = 1;
   for (int i = 0; i < nb_dims; ++i) {
     if (i == 1) {
@@ -1951,6 +1973,7 @@ void grid_sample(T *output, const T *input, const T *grid, int *output_dims,
     count *= output_desc.shape[i];
   }
 
+  // 根据维度数调度不同的CUDA核函数
   if (nb_dims == 4) {
     grid_sampler_2d_kernel<T>
         <<<GET_BLOCKS(count), THREADS_PER_BLOCK, 0, stream>>>(

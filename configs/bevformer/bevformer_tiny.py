@@ -212,7 +212,7 @@ model = dict(
 )
 
 dataset_type = "BEVFormerNuScenesDataset"
-data_root = "data/nuscenes/"
+data_root = "data/nuscenes-mini/"
 file_client_args = dict(backend="disk")
 
 train_pipeline = [
@@ -308,7 +308,11 @@ lr_config = dict(
     warmup_ratio=1.0 / 3,
     min_lr_ratio=1e-3,
 )
-total_epochs = 24
+total_epochs = 40
+
+load_from = 'checkpoints/pytorch/bevformer_tiny_epoch_24.pth'
+# resume_from = f'work_dirs/bevformer_small/epoch_X.pth'
+
 evaluation = dict(interval=1, pipeline=test_pipeline)
 
 runner = dict(type="EpochBasedRunner", max_epochs=total_epochs)

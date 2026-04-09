@@ -7,11 +7,14 @@ import argparse
 import tensorrt as trt
 import numpy as np
 from mmcv import Config
+# 加载插件库
 from mmdeploy.backend.tensorrt import load_tensorrt_plugin
 
 import sys
 
 sys.path.append(".")
+sys.path.append("/MOGO_VEPFS/PCPT/pcpt/project/czl/BEVFormer_tensorrt_muxindawang/")
+
 from det2trt.convert import build_engine
 from det2trt.utils.tensorrt import HostDeviceMem, get_logger, create_engine_context
 

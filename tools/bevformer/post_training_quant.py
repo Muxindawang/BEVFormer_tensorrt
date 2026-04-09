@@ -46,6 +46,7 @@ def main():
     model = MMDataParallel(model.cuda())
 
     output = os.path.split(args.checkpoint)[1].split(".")[0] + f"_ptq_{args.calibrator}"
+    # per channel方式
     if args.pcq:
         output += "_pcq"
 

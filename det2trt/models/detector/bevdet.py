@@ -9,14 +9,18 @@ from third_party.bev_mmdet3d.core.bbox import bbox3d2result
 class BEVDetTRT(BEVDet):
     def __init__(self, *args, **kwargs):
         super(BEVDetTRT, self).__init__(*args, **kwargs)
+        # 从全局注册表中获取名为 "bev_pool_v2_2" 的 TensorRT 函数（即插件）
         self.bev_pool_v2 = TRT_FUNCTIONS.get("bev_pool_v2_2")
 
+    # 这个函数用于在导出 ONNX 前，准备插件所需的输入数据（ranks）
     def get_bev_pool_input(
         self, sensor2keyegos, ego2globals, intrins, post_rots, post_trans, bda
     ):
+        # 1. 获取每个像素对应的 LiDAR 坐标
         coor = self.img_view_transformer.get_lidar_coor(
             sensor2keyegos, ego2globals, intrins, post_rots, post_trans, bda
         )
+        # 2. 根据坐标，预先计算好 voxel pooling 所需的索引（ranks）
         (
             ranks_bev,
             ranks_depth,
@@ -35,6 +39,7 @@ class BEVDetTRT(BEVDet):
         interval_starts,
         interval_lengths,
     ):
+        # 确保所有 ranks 都是正确的整数类型
         ranks_bev, ranks_depth, ranks_feat, interval_starts, interval_lengths = (
             ranks_bev.int(),
             ranks_depth.int(),
@@ -53,11 +58,14 @@ class BEVDetTRT(BEVDet):
                 self.img_view_transformer.D + self.img_view_transformer.out_channels
             ),
         ]
+        # 调整 tran_feat 的布局为 NHWC (TensorRT 插件期望的格式) # [B*N, H, W, C]
         tran_feat = tran_feat.permute(0, 2, 3, 1)
 
         depth = depth.contiguous()
         tran_feat = tran_feat.contiguous()
 
+        # 4. 【核心】调用 TensorRT 插件执行 BEV Pooling
+        # 输入: depth, tran_feat, 以及预计算好的 ranks
         x = self.bev_pool_v2(
             depth,
             tran_feat,
@@ -67,6 +75,7 @@ class BEVDetTRT(BEVDet):
             interval_starts,
             interval_lengths,
         )
+        # 插件输出是 [B, H_bev, W_bev, C]，需要转回 NCHW
         x = x.permute(0, 3, 1, 2).contiguous()
         bev_feat = self.bev_encoder(x)
         outs = self.pts_bbox_head.forward_trt(bev_feat)

@@ -385,6 +385,16 @@ __global__ void ms_deformable_im2col_gpu_kernel(
     const int batch_size, const int spatial_size, const int num_heads,
     const int channels, const int num_levels, const int num_query,
     const int num_point, const int points_per_group, scalar_t *data_col) {
+  /**
+  *n：总线程数（对应num_kernels，即需要处理的 “查询 - 头 - 通道” 单元总数）。
+  data_value：多尺度特征图数据（输入特征）。[batch_size, num_levels, spatial_size, num_heads, channels]
+  data_spatial_shapes：各尺度特征图的空间尺寸（高、宽，格式为[h1, w1, h2, w2, ...]）。[num_levels×2]
+  data_reference_points：参考点坐标（注意力计算的基准点，归一化到[0,1]）。[batch_size, num_query, points_per_group, 2]
+  data_sampling_offsets：采样偏移量（相对于参考点的偏移，决定实际采样位置）。[batch_size, num_query, num_heads, num_levels, num_point, 2]
+  data_attn_weight：注意力权重（控制不同采样点对输出的贡献）。[batch_size, num_query, num_heads, num_levels, num_point]
+  其余参数：维度信息（batch_size、num_heads等）。
+  */
+
   CUDA_1D_KERNEL_LOOP(index, n) {
     const int temp = index;
     const int channel_index = index % channels;
@@ -393,15 +403,23 @@ __global__ void ms_deformable_im2col_gpu_kernel(
     index /= num_heads;
     const int query_index = index % num_query;
     const int batch_index = index / num_query;
+    // 全局索引index 是 query-head-channel 的扁平化索引
 
+    // [batch_size, num_levels, spatial_size, num_heads, channels]
+    // batch 偏移 batch_index * spatial_size * num_heads * channels
+    // head 偏移 head_index * channels
+    // channel 偏移 chennel_index
     const scalar_t *data_value_ptr =
         data_value +
         (batch_index * spatial_size * num_heads + head_index) * channels +
         channel_index;
+    // data_attn_weight 按[batch_size, num_query, num_heads, num_levels, num_point]组织
     int data_weight_ptr =
         ((batch_index * num_query + query_index) * num_heads + head_index) *
         num_levels * num_point;
+    // offset的shape是weight的2倍，因为是x,y坐标，所以下面乘2
     int data_offset_w_ptr = data_weight_ptr << 1;
+    // 参考点 [batch_size, num_query, points_per_group, 2]
     int data_points_ptr =
         (batch_index * num_query + query_index) * points_per_group * 2;
     scalar_t *data_output_ptr = data_col + temp;
@@ -409,27 +427,33 @@ __global__ void ms_deformable_im2col_gpu_kernel(
 
     for (int level_index = 0; level_index < num_levels; ++level_index) {
       const int spatial_h_ptr = level_index << 1;
+      // 当前 level 对应的特征图的高宽
       const int spatial_h = data_spatial_shapes[spatial_h_ptr];
       const int spatial_w = data_spatial_shapes[spatial_h_ptr + 1];
 
       for (int point_index = 0; point_index < num_point; ++point_index) {
+        // 确定当前点属于那一组参考点，每组包含points_per_group个点
         const int point_index_per_group = point_index % points_per_group;
+        // 读取参考点坐标（归一化到[0,1]）
         const scalar_t reference_point_x =
             data_reference_points[data_points_ptr + point_index_per_group * 2];
         const scalar_t reference_point_y =
             data_reference_points[data_points_ptr + point_index_per_group * 2 +
                                   1];
+        // 计算实际采样位置（将归一化坐标转换为特征图上的绝对坐标，并加上偏移）
         const scalar_t loc_w = reference_point_x * spatial_w +
                                data_sampling_offsets[data_offset_w_ptr];
         const scalar_t loc_h = reference_point_y * spatial_h +
                                data_sampling_offsets[data_offset_w_ptr + 1];
 
+        // 读取当前采样点的注意力权重
         const scalar_t weight = data_attn_weight[data_weight_ptr];
 
         const scalar_t h_im = loc_h - 0.5f;
         const scalar_t w_im = loc_w - 0.5f;
 
         if (h_im > -1 && w_im > -1 && h_im < spatial_h && w_im < spatial_w) {
+          // 双线性插值采样特征，并乘以注意力权重后累加到输出
           output += ms_deform_attn_im2col_bilinear(data_value_ptr, spatial_h,
                                                    spatial_w, num_heads,
                                                    channels, h_im, w_im) *
@@ -778,6 +802,15 @@ void ms_deformable_im2col_cuda(const scalar_t *data_value,
                                const int num_levels, const int num_query,
                                const int num_point, const int points_per_group,
                                scalar_t *data_col, cudaStream_t stream) {
+  /**
+   * data_value：多尺度特征图数据（输入特征）
+   * data_spatial_shapes：各尺度特征图的空间尺寸（如高、宽）。
+   * data_reference_points：参考点坐标（注意力计算的基准点）。
+   * data_sampling_offsets：采样偏移量（参考点的偏移，决定实际采样位置）。
+   * data_attn_weight：注意力权重（控制不同采样点的贡献）。
+   */
+  // points_per_group“每组查询的采样点数量”
+  // 每个线程负责处理一个channel中一个head一个query
   const int num_kernels = num_query * num_heads * channels;
   const int value_step = num_heads * spatial_size * channels;
   const int output_step = num_heads * num_query * channels;

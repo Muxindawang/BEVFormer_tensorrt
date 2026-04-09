@@ -72,16 +72,21 @@ int32_t MultiScaleDeformableAttnPlugin::enqueue(
     const nvinfer1::PluginTensorDesc *inputDesc,
     const nvinfer1::PluginTensorDesc *outputDesc, const void *const *inputs,
     void *const *outputs, void *workspace, cudaStream_t stream) noexcept {
+  
+  // 量化的scale
   float scale_value = inputDesc[0].scale, scale_offset = inputDesc[3].scale,
         scale_weight = inputDesc[4].scale, scale_out = outputDesc[0].scale;
   Dims value_dims = inputDesc[0].dims;
   const int batch = value_dims.d[0];
   const int spatial_size = value_dims.d[1];
+  // 注意力头的数量
   const int num_heads = value_dims.d[2];
   const int channels = value_dims.d[3];
 
+  // FPN 层数
   const int num_levels = inputDesc[1].dims.d[0];
 
+  // 每组查询的采样点数 2倍于采样点数因为有x,y两个坐标
   const int points_per_group = inputDesc[2].dims.d[3] / 2;
   const int num_query = inputDesc[3].dims.d[1];
   const int num_point = inputDesc[4].dims.d[3] / num_levels;

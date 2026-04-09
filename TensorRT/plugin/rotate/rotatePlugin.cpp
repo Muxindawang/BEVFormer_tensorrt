@@ -54,7 +54,7 @@ DimsExprs RotatePlugin::getOutputDimensions(
     int32_t outputIndex, const nvinfer1::DimsExprs *inputs, int32_t nbInputs,
     nvinfer1::IExprBuilder &exprBuilder) noexcept {
   DimsExprs outputDim;
-  outputDim.nbDims = 3;
+  outputDim.nbDims = 3;       // 3维度输出 CHW
   outputDim.d[0] = inputs[0].d[0];
   outputDim.d[1] = inputs[0].d[1];
   outputDim.d[2] = inputs[0].d[2];
@@ -72,17 +72,21 @@ size_t RotatePlugin::getWorkspaceSize(const nvinfer1::PluginTensorDesc *inputs,
   return 0;
 }
 
+// 执行插件计算（核心函数）
 int32_t RotatePlugin::enqueue(const nvinfer1::PluginTensorDesc *inputDesc,
                               const nvinfer1::PluginTensorDesc *outputDesc,
                               const void *const *inputs, void *const *outputs,
                               void *workspace, cudaStream_t stream) noexcept {
+  // 输入数据的内容？
   Dims input_dims = inputDesc[0].dims;
   auto data_type = inputDesc[0].type;
   auto data_type_angle = inputDesc[1].type;
+  // 获取量化缩放因子
   float scale_i = inputDesc[0].scale, scale_o = outputDesc[0].scale;
 
   switch (data_type) {
   case DataType::kFLOAT:
+    // 单精度类型
     rotate<float>((float *)outputs[0], (float *)inputs[0], (float *)inputs[1],
                   (float *)inputs[2], &(input_dims.d[0]), mMode, stream);
     break;
@@ -114,18 +118,23 @@ int32_t RotatePlugin::enqueue(const nvinfer1::PluginTensorDesc *inputDesc,
   return 0;
 }
 
+// 获取序列化所需大小
 size_t RotatePlugin::getSerializationSize() const noexcept {
   return serialized_size(mMode);
 }
 
+// 序列化插件数据
 void RotatePlugin::serialize(void *buffer) const noexcept {
   serialize_value(&buffer, mMode);
 }
 
+// 检查格式组合是否支持
 bool RotatePlugin::supportsFormatCombination(
     int32_t pos, const nvinfer1::PluginTensorDesc *inOut, int32_t nbInputs,
     int32_t nbOutputs) noexcept {
+  // 检查第一个输入（数据输入）
   if (pos == 0) {
+    // 使用half2时的格式支持
     if (use_h2) {
       return (inOut[pos].type == nvinfer1::DataType::kFLOAT &&
               inOut[pos].format == nvinfer1::TensorFormat::kLINEAR) ||
@@ -161,8 +170,10 @@ char const *RotatePlugin::getPluginVersion() const noexcept {
   return R_PLUGIN_VERSION;
 }
 
+// 销毁插件实例
 void RotatePlugin::destroy() noexcept { delete this; }
 
+// 克隆插件实例
 IPluginV2DynamicExt *RotatePlugin::clone() const noexcept {
   try {
     int mode, paddingMode;
@@ -201,6 +212,7 @@ DataType RotatePlugin::getOutputDataType(int32_t index,
   return inputTypes[0];
 }
 
+// 附加到CUDA上下文
 void RotatePlugin::attachToContext(
     cudnnContext *cudnn, cublasContext *cublas,
     nvinfer1::IGpuAllocator *allocator) noexcept {}
@@ -213,6 +225,7 @@ void RotatePlugin::configurePlugin(const nvinfer1::DynamicPluginTensorDesc *in,
                                    int32_t nbOutputs) noexcept {
     PLUGIN_ASSERT(nbInputs == 3)}
 
+// RotatePluginCreator构造函数（初始化属性）
 RotatePluginCreator::RotatePluginCreator() {
   mPluginAttributes.clear();
   mPluginAttributes.emplace_back(nvinfer1::PluginField("interpolation"));
@@ -222,6 +235,7 @@ RotatePluginCreator::RotatePluginCreator() {
   mFC.fields = mPluginAttributes.data();
 }
 
+// 获取插件创建者名称
 char const *RotatePluginCreator::getPluginName() const noexcept {
   return R_PLUGIN_NAME;
 }
@@ -230,10 +244,12 @@ char const *RotatePluginCreator::getPluginVersion() const noexcept {
   return R_PLUGIN_VERSION;
 }
 
+// 获取字段名称集合
 PluginFieldCollection const *RotatePluginCreator::getFieldNames() noexcept {
   return &mFC;
 }
 
+// 创建插件实例
 IPluginV2DynamicExt *RotatePluginCreator::createPlugin(
     const char *name, const nvinfer1::PluginFieldCollection *fc) noexcept {
   try {
@@ -247,6 +263,7 @@ IPluginV2DynamicExt *RotatePluginCreator::createPlugin(
       }
     }
 
+    // 创建插件实例并初始化
     auto *plugin = new RotatePlugin(mode, false);
     plugin->setPluginNamespace(mNamespace.c_str());
     plugin->initialize();
@@ -257,6 +274,7 @@ IPluginV2DynamicExt *RotatePluginCreator::createPlugin(
   return nullptr;
 }
 
+// 从序列化数据创建插件实例
 IPluginV2DynamicExt *
 RotatePluginCreator::deserializePlugin(const char *name, const void *serialData,
                                        size_t serialLength) noexcept {

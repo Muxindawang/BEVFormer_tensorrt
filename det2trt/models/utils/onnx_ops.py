@@ -397,4 +397,4 @@ def grid_sampler_sym(g, input, grid, interpolation_mode, padding_mode, align_cor
     )
 
 
-torch.onnx.register_custom_op_symbolic("aten::grid_sampler", grid_sampler_sym, 13)
+# torch.onnx.register_custom_op_symbolic("aten::grid_sampler", grid_sampler_sym, 13)

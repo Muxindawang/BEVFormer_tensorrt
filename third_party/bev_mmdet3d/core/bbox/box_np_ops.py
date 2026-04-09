@@ -4,6 +4,9 @@
 
 import numba
 import numpy as np
+if not hasattr(np, 'long'):
+    np.long = np.int64
+import numpy as np
 
 
 def camera_to_lidar(points, r_rect, velo2cam):

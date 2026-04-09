@@ -186,7 +186,7 @@ model = dict(
 
 # Data
 dataset_type = "BEVDetNuScenesDataset"
-data_root = "data/nuscenes/"
+data_root = "data/nuscenes-mini/"
 file_client_args = dict(backend="disk")
 
 bda_aug_conf = dict(

@@ -124,17 +124,22 @@ grid_sampler_compute_source_index_h2(__half2 coord, __half2 wh) {
   return coord;
 }
 
+// kernel function
 template <typename scalar_t>
 __global__ void rotateKernel(const int nthreads, scalar_t *output,
                              const scalar_t *input, const scalar_t *angle,
                              const scalar_t *center, int channel, int height,
                              int width, RotateInterpolation interp) {
+  // 每个通道的像素数量
   int inp_sC = width * height;
+  // 每行像素数量
   int inp_sH = width;
   int inp_sW = 1;
 
   const scalar_t ang = -(*angle) * M_PI / 180.f;
   const scalar_t cx = center[0] - 0.5f * width, cy = center[1] - 0.5f * height;
+  // ang 是指绕原点旋转的角度，逆时针为正方向，需要先把图像的中心点平移到远点，旋转之后再平移回来
+  // 得到的 matrix是一个放射旋转矩阵 6个参数如下
   const scalar_t matrix[6] = {std::cos(ang),
                               std::sin(ang),
                               -cx * std::cos(ang) - cy * std::sin(ang) + cx,
@@ -142,19 +147,24 @@ __global__ void rotateKernel(const int nthreads, scalar_t *output,
                               std::cos(ang),
                               cx * std::sin(ang) - cy * std::cos(ang) + cy};
 
+  // 遍历所有线程 index是线程的全局索引
   CUDA_1D_KERNEL_LOOP(index, nthreads) {
+    // w 和 h 是当前线程对应的像素坐标
     const int w = index % width;
     const int h = (index / width) % height;
     const scalar_t x = -width * 0.5f + 0.5f + w, y = -height * 0.5f + 0.5f + h;
 
+    // 旋转后的归一化坐标 范围是[-1, 1]
     const scalar_t grid_x =
         (matrix[0] * x + matrix[1] * y + matrix[2]) / (0.5f * width);
     const scalar_t grid_y =
         (matrix[3] * x + matrix[4] * y + matrix[5]) / (0.5f * height);
 
+    // 将归一化坐标转换为源图像中的像素索引
     scalar_t ix = grid_sampler_compute_source_index(grid_x, width);
     scalar_t iy = grid_sampler_compute_source_index(grid_y, height);
 
+    // 双线性插值
     if (interp == RotateInterpolation::Bilinear) {
       // get NE, NW, SE, SW pixel values from (x, y)
       int ix_nw = static_cast<int>(::floor(ix));
@@ -175,8 +185,12 @@ __global__ void rotateKernel(const int nthreads, scalar_t *output,
       // calculate bilinear weighted pixel value and set output pixel
       auto inp_ptr = input;
       auto out_ptr = output + h * inp_sH + w * inp_sW;
+      // 循环中对每个通道进行处理
       for (int c = 0; c < channel; ++c, inp_ptr += inp_sC, out_ptr += inp_sC) {
+        // 初始化输出像素为0
         *out_ptr = static_cast<scalar_t>(0);
+        // 对目标像素周边的四个像素进行加权求和
+        // [ix_nw, iy_nw] [ix_ne, iy_ne] 是对应原图像素左上角和右下角的坐标，bw和ne为对应的权重，其他两个角点同理
         if (within_bounds_2d(iy_nw, ix_nw, height, width)) {
           *out_ptr += inp_ptr[iy_nw * inp_sH + ix_nw * inp_sW] * nw;
         }

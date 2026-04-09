@@ -71,6 +71,8 @@ class FuncRegistry:
 
 OS_PATH = "TensorRT/lib/libtensorrt_ops.so"
 OS_PATH = os.path.realpath(OS_PATH)
+print(f"调试时OS_PATH解析结果：{OS_PATH}")  # 打印VSCode调试时的路径
+print(f"当前工作目录cwd：{os.getcwd()}")      # 打印当前工作目录
 ctypes.CDLL(OS_PATH)
 print(f"Loaded tensorrt plugins from {OS_PATH}")
 
